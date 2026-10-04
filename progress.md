@@ -1,2 +1,4 @@
-04-10-2026 | 10:28 AM
-set the linux, vscode and github
+---
+04-10-2026 | 10:28 AM  
+set the linux, vscode and github  
+---
