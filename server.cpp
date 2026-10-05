@@ -104,15 +104,21 @@ public:
     }
     return ct;
   }
+
+  Stack(const Stack &) = delete;
+
+  Stack &operator=(const Stack &) = delete;
 };
 
 // Timeline : doubly linked list of Snapshots
 struct Snapshot; // fwd declaration;
+
 struct TimelineNode
 {
   Snapshot *data;
   TimelineNode *next;
   TimelineNode *prev;
+  TimelineNode(Snapshot *d) : data(d), next(nullptr), prev(nullptr) {}
 };
 class Timeline
 {
@@ -121,13 +127,26 @@ class Timeline
 
 public:
   // Implement these functions
-  Timeline() {}
+  Timeline() : head(nullptr), tail(nullptr), stepCount(0) {}
+  Timeline(const Timeline &) = delete;
+  Timeline &operator=(const Timeline &) = delete;
+  ~Timeline();
   void record(Snapshot *s)
   {
-    // add record in the timeline
+    if (stepCount == 0)
+    {
+      head = tail = new TimelineNode(s);
+      stepCount++;
+      return;
+    }
+    TimelineNode *t = new TimelineNode(s);
+    tail->next = t;
+    t->prev = tail;
+    tail = t;
+    stepCount++;
   }
-  TimelineNode *begin() {}
-  int32_t getStepCount() {}
+  TimelineNode *begin() const { return head; }
+  int32_t getStepCount() const { return stepCount; }
 };
 
 // Core structs
@@ -150,6 +169,17 @@ struct Snapshot
   Frame callStack[MAX_STACK_DEPTH];
   int32_t stackDepth;
 };
+Timeline::~Timeline()
+{
+  TimelineNode *temp = head;
+  while (temp != nullptr)
+  {
+    TimelineNode *i = temp->next;
+    delete temp->data;
+    delete temp;
+    temp = i;
+  }
+}
 struct TTDBHeader
 {
   char magic[4]; // "TTDB"
