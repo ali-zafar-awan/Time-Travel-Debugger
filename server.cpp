@@ -321,7 +321,28 @@ bool validateProgram(const char *sourcePath)
 // PASS 0x1: RESOLVE() -> resolve.bin
 int64_t writeResolveRecord(FILE *f, int64_t offsetField, const string &text)
 {
-  // writes one [offset(8B)][size(4B)][string] record at the current file position returns this record's own starting byte position
+  int64_t pos = ftell(f);
+  if (pos < 0)
+  {
+    throw runtime_error("ftell failed in writeResolveRecord");
+  }
+
+  int32_t s = (int32_t)text.size();
+
+  if (fwrite(&offsetField, sizeof(int64_t), 1, f) != 1)
+  {
+    throw runtime_error("failed writing offset field");
+  }
+  if (fwrite(&s, sizeof(int32_t), 1, f) != 1)
+  {
+    throw runtime_error("failed writing size field");
+  }
+  if (s > 0 && fwrite(text.data(), 1, text.size(), f) != text.size())
+  {
+    throw runtime_error("failed writing record text");
+  }
+
+  return pos;
 }
 int64_t readResolveRecord(FILE *f, string &outText)
 {

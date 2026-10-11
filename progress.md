@@ -22,3 +22,6 @@ Implement the FirstWord and SecondWord function
 11-10-2026 | 01:00 PM  
 Implement the Validate Function  
 ---
+11-10-2026 | 01:35 PM  
+Implement the writeResolveRecord Function 
+--- 
