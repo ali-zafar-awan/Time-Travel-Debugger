@@ -11,7 +11,7 @@ Implement the stack class completely (wese yeh kerte huwe maza aaya)
 5-10-2026 | 01:14 PM  
 Implement the Timeline Class completely (CN ki class chori hai mene, motivation check karein)  
 ---
-Last week mein ghar guest bohat zayada aaye huwe thay and tabiyat bhi kharab thi is liye project mein koi progree nahi. Thank you for extending the deadline.  
+Last week mein ghar guest bohat zayada aaye huwe thay and tabiyat bhi kharab thi is liye project mein koi progress nahi. Thank you for extending the deadline.  
 ---
 11-10-2026 | 10:50 PM  
 Implement the ReadSourceLine function  
