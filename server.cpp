@@ -284,7 +284,38 @@ string secondWord(const string &line)
 
 bool validateProgram(const char *sourcePath)
 {
-  // for each func defined there should be exactly one func_end and no nested funcs allowed -
+  ifstream in(sourcePath);
+  if (!in)
+  {
+    return false;
+  }
+
+  bool flag = false;
+  string line;
+
+  while (readSourceLine(in, line))
+  {
+    string s = firstWord(line);
+
+    if (s == "func")
+    {
+      if (flag || secondWord(line).empty())
+      {
+        return false;
+      }
+      flag = true;
+    }
+    else if (s == "func_end")
+    {
+      if (!flag)
+      {
+        return false;
+      }
+      flag = false;
+    }
+  }
+
+  return !flag;
 }
 
 // PASS 0x1: RESOLVE() -> resolve.bin

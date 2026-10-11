@@ -19,3 +19,6 @@ Implement the ReadSourceLine function
 11-10-2026 | 11:25 PM  
 Implement the FirstWord and SecondWord function  
 ---
+11-10-2026 | 01:00 PM  
+Implement the Validate Function  
+---
