@@ -243,12 +243,45 @@ bool readSourceLine(ifstream &in, string &out)
 
 string firstWord(const string &line)
 {
-  // returns first word from the input string
+  size_t i = 0;
+  while (i < line.size() && (line[i] == ' ' || line[i] == '\t'))
+  {
+    i++;
+  }
+  size_t start = i;
+  while (i < line.size() && line[i] != ' ' && line[i] != '\t')
+  {
+    i++;
+  }
+  return line.substr(start, i - start);
 }
+
 string secondWord(const string &line)
 {
-  // returns the second word
+  size_t i = 0;
+  for (int w = 0; w < 2; w++)
+  {
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t'))
+    {
+      i++;
+    }
+    if (i >= line.size())
+    {
+      return "";
+    }
+    size_t start = i;
+    while (i < line.size() && line[i] != ' ' && line[i] != '\t')
+    {
+      i++;
+    }
+    if (w == 1)
+    {
+      return line.substr(start, i - start);
+    }
+  }
+  return "";
 }
+
 bool validateProgram(const char *sourcePath)
 {
   // for each func defined there should be exactly one func_end and no nested funcs allowed -

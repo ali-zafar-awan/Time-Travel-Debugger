@@ -16,3 +16,6 @@ Last week mein ghar guest bohat zayada aaye huwe thay and tabiyat bhi kharab thi
 11-10-2026 | 10:50 PM  
 Implement the ReadSourceLine function  
 ---
+11-10-2026 | 11:25 PM  
+Implement the FirstWord and SecondWord function  
+---
