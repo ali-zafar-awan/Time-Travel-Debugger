@@ -169,6 +169,7 @@ struct Snapshot
   Frame callStack[MAX_STACK_DEPTH];
   int32_t stackDepth;
 };
+
 Timeline::~Timeline()
 {
   TimelineNode *temp = head;
@@ -180,6 +181,7 @@ Timeline::~Timeline()
     temp = i;
   }
 }
+
 struct TTDBHeader
 {
   char magic[4]; // "TTDB"
@@ -210,8 +212,35 @@ struct PendingPatch
 // PASS 0x0: READING source.bin + VALIDITY CHECK
 bool readSourceLine(ifstream &in, string &out)
 {
-  // reads the next nonblank line
+  string line;
+
+  while (getline(in, line))
+  {
+    if (!line.empty() && line.back() == '\r')
+    {
+      line.pop_back();
+    }
+    bool blank = true;
+
+    for (char ch : line)
+    {
+      if (ch != ' ' && ch != '\t')
+      {
+        blank = false;
+        break;
+      }
+    }
+
+    if (!blank)
+    {
+      out = line;
+      return true;
+    }
+  }
+
+  return false;
 }
+
 string firstWord(const string &line)
 {
   // returns first word from the input string
