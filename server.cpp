@@ -344,6 +344,7 @@ int64_t writeResolveRecord(FILE *f, int64_t offsetField, const string &text)
 
   return pos;
 }
+
 int64_t readResolveRecord(FILE *f, string &outText)
 {
   int64_t offsetField = 0;
@@ -365,20 +366,113 @@ int64_t readResolveRecord(FILE *f, string &outText)
 
   return offsetField;
 }
+
 int64_t resolveProgram(const char *sourcePath, const char *resolveBinPath)
 {
   FuncEntry funcArray[MAX_FUNCS];
   int32_t funcCount = 0;
   PendingPatch patches[MAX_PATCHES];
   int32_t patchCount = 0;
-  // Every source line becomes one record holding the raw line, as-is.
-  // resolve() only PEEKS at the leading word(s) -- enough to spot FUNC
-  // (remember its position) and CALL (remember which function it needs
-  // and where its offset field sits).
-  // Once the whole file is written, every CALL's offset field is patched
-  // with its target's position. Patching happens after the full write
-  // Returns the byte offset of main's FUNC header record.
-  // if there is no main return the error
+
+  ifstream in(sourcePath);
+  if (!in)
+  {
+    throw runtime_error("cannot open source file");
+  }
+  FILE *f = fopen(resolveBinPath, "w+b");
+  if (f == nullptr)
+  {
+    throw runtime_error("cannot create resolve.bin");
+  }
+
+  try
+  {
+    string line;
+    while (readSourceLine(in, line))
+    {
+      string s = firstWord(line);
+      int64_t p = writeResolveRecord(f, -1, line);
+
+      if (s == "func")
+      {
+        string name = secondWord(line);
+        for (int32_t i = 0; i < funcCount; i++)
+        {
+          if (funcArray[i].funcName == name)
+          {
+            fclose(f);
+            return -1;
+          }
+        }
+        if (funcCount == MAX_FUNCS)
+        {
+          throw runtime_error("too many functions");
+        }
+        funcArray[funcCount].funcName = name;
+        funcArray[funcCount].byteOffsetInResolveBin = p;
+        funcCount++;
+      }
+      else if (s == "call")
+      {
+        if (patchCount == MAX_PATCHES)
+        {
+          throw runtime_error("too many call sites");
+        }
+        patches[patchCount].byteOffsetOfOffsetField = p;
+        patches[patchCount].targetFuncName = secondWord(line);
+        patchCount++;
+      }
+    }
+
+    int64_t mainOffset = -1;
+    for (int32_t i = 0; i < funcCount; i++)
+    {
+      if (funcArray[i].funcName == "main")
+      {
+        mainOffset = funcArray[i].byteOffsetInResolveBin;
+        break;
+      }
+    }
+    if (mainOffset < 0)
+    {
+      fclose(f);
+      return -1;
+    }
+
+    for (int32_t j = 0; j < patchCount; j++)
+    {
+      int64_t target = -1;
+      for (int32_t i = 0; i < funcCount; i++)
+      {
+        if (funcArray[i].funcName == patches[j].targetFuncName)
+        {
+          target = funcArray[i].byteOffsetInResolveBin;
+          break;
+        }
+      }
+      if (target < 0)
+      {
+        fclose(f);
+        return -1;
+      }
+      if (fseek(f, (long)patches[j].byteOffsetOfOffsetField, SEEK_SET) != 0)
+      {
+        throw runtime_error("fseek failed while patching");
+      }
+      if (fwrite(&target, sizeof(int64_t), 1, f) != 1)
+      {
+        throw runtime_error("failed writing patched offset");
+      }
+    }
+
+    fclose(f);
+    return mainOffset;
+  }
+  catch (...)
+  {
+    fclose(f);
+    throw;
+  }
 }
 
 // PASS 0x2: EXECUTION (tokenization happens here)
@@ -388,17 +482,61 @@ enum TokenType
   IDENTIFIER,
   PARAM
 };
+
 struct Token
 {
   TokenType type;
   string text;
 };
+
 int32_t tokenizeLine(const string &line, Token tokens[], int32_t maxTokens)
 {
-  // first word is always a instruction keyword
-  // instruction set = [func, func_end, call, set, add, sub, mul and div]
-  // next word is identifier like name of a function, variable name
-  // after identifier all are the params/arg, space separated
+  int32_t n = 0;
+  size_t i = 0;
+
+  while (true)
+  {
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t'))
+    {
+      i++;
+    }
+    if (i >= line.size())
+    {
+      break;
+    }
+    size_t start = i;
+    while (i < line.size() && line[i] != ' ' && line[i] != '\t')
+    {
+      i++;
+    }
+
+    if (n >= maxTokens)
+    {
+      throw runtime_error("too many tokens on one line");
+    }
+    string word = line.substr(start, i - start);
+
+    if (n == 0)
+    {
+      if (word != "func" && word != "func_end" && word != "call" && word != "set" && word != "add" && word != "sub" && word != "mul" && word != "div")
+      {
+        throw runtime_error("unknown keyword: " + word);
+      }
+      tokens[n].type = KEYWORD;
+    }
+    else if (n == 1)
+    {
+      tokens[n].type = IDENTIFIER;
+    }
+    else
+    {
+      tokens[n].type = PARAM;
+    }
+    tokens[n].text = word;
+    n++;
+  }
+
+  return n;
 }
 Snapshot *buildSnapshot(Stack<Frame> &callStack)
 {

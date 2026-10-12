@@ -25,3 +25,12 @@ Implement the Validate Function
 11-10-2026 | 01:35 PM  
 Implement the writeResolveRecord Function 
 --- 
+11-10-2026 | 02:02 PM  
+Implement the readResolveRecord Function 
+--- 
+11-10-2026 | 03:21 PM  
+Implement the ResolveProgram Function 
+---
+12-10-2026 | 12:51 PM  
+Implement the TokenizeLine Function 
+---
