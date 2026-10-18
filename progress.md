@@ -34,3 +34,9 @@ Implement the ResolveProgram Function
 12-10-2026 | 12:51 PM  
 Implement the TokenizeLine Function 
 ---
+16-10-2026 | 10:00 PM  
+Implement the executeProgram Function 
+---
+18-10-2026 | 05:00 PM  
+Implement the write tdbg Function 
+---

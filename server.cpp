@@ -13,15 +13,13 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <sys/socket.h>
-#include <unistd.h>
 using namespace std;
 
 // ---- Constants ----
 const int32_t MAX_VARS_PER_FRAME = 16;
 const int32_t MAX_STACK_DEPTH = 64;
 const int32_t MAX_FUNCS = 128;
-const int32_t MAX_TOKENS = MAX_VARS_PER_FRAME + 2; // kW + func_name + upto 16 params/args
+const int32_t MAX_TOKENS = MAX_VARS_PER_FRAME + 2; // str + func_name + upto 16 params/args
 const int32_t MAX_PATCHES = MAX_FUNCS * 4;
 const uint64_t MAX_SOURCE_BYTES = 15ULL * 1024 * 1024; // sanity cap on the declared file length
 const int32_t IO_BUFFER_SIZE = 64 * 1024;              // fixed buffer for streaming to/from disk
@@ -189,12 +187,13 @@ struct TTDBHeader
   int32_t stepCount;
   int64_t indexOffset;
 };
+
 void writeHeader(FILE *f, const TTDBHeader &h)
 {
   fwrite(h.magic, 1, 4, f);
   fwrite(&h.version, sizeof(int32_t), 1, f);
-
-  // placeholder for other two data members
+  fwrite(&h.stepCount, sizeof(int32_t), 1, f);
+  fwrite(&h.indexOffset, sizeof(int64_t), 1, f);
 }
 
 // resolve.bin - bookkeeping
@@ -538,46 +537,324 @@ int32_t tokenizeLine(const string &line, Token tokens[], int32_t maxTokens)
 
   return n;
 }
+
 Snapshot *buildSnapshot(Stack<Frame> &callStack)
 {
-  // build the snapshot based on the callStack given
+  Snapshot *s = new Snapshot();
+  s->stackDepth = callStack.snapshot_into(s->callStack, MAX_STACK_DEPTH);
+  return s;
 }
-void executeProgram(const char *resolveBinPath, int64_t mainOffset,
-                    Timeline &timeline)
-{
-  // initialize the call stack
-  // make the main frame
-  // push main frame on the call stack
 
-  // implementation:
-  // execute line by line, and according to the keyword perform action
+Variable *findVar(Frame &fr, const string &name)
+{
+  for (int32_t i = 0; i < fr.argc; i++)
+  {
+    if (fr.argv[i].name == name)
+    {
+      return &fr.argv[i];
+    }
+  }
+  for (int32_t i = 0; i < fr.localCount; i++)
+  {
+    if (fr.locals[i].name == name)
+    {
+      return &fr.locals[i];
+    }
+  }
+  return nullptr;
+}
+
+int32_t getValue(Frame &fr, const string &txt)
+{
+  size_t st = 0;
+  if (txt[0] == '-')
+  {
+    st = 1;
+  }
+  bool flag = st < txt.size();
+  for (size_t j = st; j < txt.size(); j++)
+  {
+    if (txt[j] < '0' || txt[j] > '9')
+    {
+      flag = false;
+      break;
+    }
+  }
+  if (flag)
+  {
+    return (int32_t)stoll(txt);
+  }
+  Variable *var = findVar(fr, txt);
+  if (var == nullptr)
+  {
+    throw runtime_error("undefined variable: " + txt);
+  }
+  return var->value;
+}
+
+void executeProgram(const char *resolveBinPath, int64_t mainOffset, Timeline &timeline)
+{
+  FILE *f = fopen(resolveBinPath, "rb");
+  if (f == nullptr)
+  {
+    throw runtime_error("cannot open resolve.bin");
+  }
+
+  Stack<Frame> callStack;
+  string refNames[MAX_STACK_DEPTH][MAX_VARS_PER_FRAME];
+  Token tokens[MAX_TOKENS];
+  Token ht[MAX_TOKENS];
+  string text, htext;
+
+  fseek(f, (long)mainOffset, SEEK_SET);
+  readResolveRecord(f, htext);
+  int32_t hn = tokenizeLine(htext, ht, MAX_TOKENS);
+  Frame mainFrame{};
+  mainFrame.func_name = ht[1].text;
+  mainFrame.argc = hn - 2;
+  for (int32_t i = 0; i < mainFrame.argc; i++)
+  {
+    mainFrame.argv[i].name = ht[2 + i].text;
+  }
+  mainFrame.returnLine = -1;
+  callStack.push(mainFrame);
+
+  while (!callStack.isEmpty())
+  {
+    int64_t offsetField = readResolveRecord(f, text);
+    int32_t n = tokenizeLine(text, tokens, MAX_TOKENS);
+    const string &str = tokens[0].text;
+    Frame &fr = callStack.peek();
+
+    if (str == "set")
+    {
+      if (n != 3)
+      {
+        throw runtime_error("set needs a name and one value");
+      }
+      int32_t v = getValue(fr, tokens[2].text);
+      Variable *var = findVar(fr, tokens[1].text);
+      if (var == nullptr)
+      {
+        if (fr.localCount == MAX_VARS_PER_FRAME)
+        {
+          throw runtime_error("too many locals");
+        }
+        var = &fr.locals[fr.localCount++];
+        var->name = tokens[1].text;
+      }
+      var->value = v;
+    }
+    else if (str == "add" || str == "sub" || str == "mul" || str == "div")
+    {
+      if (n < 3)
+      {
+        throw runtime_error(str + " needs a target and an operand");
+      }
+      Variable *dest = findVar(fr, tokens[1].text);
+      if (dest == nullptr)
+      {
+        throw runtime_error("undefined variable: " + tokens[1].text);
+      }
+      int64_t r = dest->value;
+      for (int32_t i = 2; i < n; i++)
+      {
+        int64_t x = getValue(fr, tokens[i].text);
+        if (str == "add")
+        {
+          r += x;
+        }
+        else if (str == "sub")
+        {
+          r -= x;
+        }
+        else if (str == "mul")
+        {
+          r *= x;
+        }
+        else
+        {
+          if (x == 0)
+          {
+            throw runtime_error("division by zero");
+          }
+          r /= x;
+        }
+      }
+      dest->value = (int32_t)r;
+    }
+    else if (str == "call")
+    {
+      long rp = ftell(f);
+      fseek(f, (long)offsetField, SEEK_SET);
+      readResolveRecord(f, htext);
+      hn = tokenizeLine(htext, ht, MAX_TOKENS);
+      if (hn != n)
+      {
+        throw runtime_error("wrong argument count in call");
+      }
+
+      Frame callee{};
+      callee.func_name = ht[1].text;
+      callee.argc = hn - 2;
+      for (int32_t i = 0; i < callee.argc; i++)
+      {
+        callee.argv[i].name = ht[2 + i].text;
+        callee.argv[i].value = getValue(fr, tokens[2 + i].text);
+      }
+      callee.returnLine = (int32_t)rp;
+
+      int32_t pos = callStack.depth();
+      callStack.push(callee);
+      for (int32_t i = 0; i < callee.argc; i++)
+      {
+        refNames[pos][i] = tokens[2 + i].text;
+      }
+    }
+    else if (str == "func_end")
+    {
+      Frame done = callStack.pop();
+      if (!callStack.isEmpty())
+      {
+        Frame &caller = callStack.peek();
+        int32_t pos = callStack.depth();
+        for (int32_t i = 0; i < done.argc; i++)
+        {
+          Variable *dst = findVar(caller, refNames[pos][i]);
+          if (dst != nullptr)
+          {
+            dst->value = done.argv[i].value;
+          }
+        }
+        fseek(f, (long)done.returnLine, SEEK_SET);
+      }
+    }
+
+    if (!callStack.isEmpty())
+    {
+      timeline.record(buildSnapshot(callStack));
+    }
+  }
+
+  fclose(f);
 }
 
 // PASS 0x3: SERIALIZE TIMELINE
 void writeTdbg(Timeline &timeline, const char *tdbgPath)
 {
-  // placeholder for header
-  // index array of the size of stepcount from the timeline
-  // placing each snapshot in the file while maintaining the index(starting
-  // point of each nth snapshot) after timeline add the index array i the file
-  // update the header
-}
-// main section
-int32_t main()
-{
-
-  if (!validateProgram("source.bin"))
+  FILE *f = fopen(tdbgPath, "wb");
+  if (f == nullptr)
   {
-    // send an error response instead of a .tdbg file
-    return 1;
+    throw runtime_error("cannot create session.tdbg");
   }
 
-  int64_t mainOffset = resolveProgram("source.bin", "resolve.bin");
+  int32_t count = timeline.getStepCount();
+  int64_t *index = new int64_t[count];
+  int32_t len = 0;
 
-  Timeline timeline;
-  executeProgram("resolve.bin", mainOffset, timeline);
+  TTDBHeader h{};
+  h.magic[0] = 'T';
+  h.magic[1] = 'T';
+  h.magic[2] = 'D';
+  h.magic[3] = 'B';
+  h.version = 1;
+  h.stepCount = count;
+  h.indexOffset = 0;
+  writeHeader(f, h);
 
-  writeTdbg(timeline, "session.tdbg");
+  TimelineNode *node = timeline.begin();
+  for (int32_t i = 0; i < count; i++)
+  {
+    index[i] = ftell(f);
+    const Snapshot &s = *node->data;
+
+    fwrite(&s.stackDepth, sizeof(int32_t), 1, f);
+    for (int32_t d = 0; d < s.stackDepth; d++)
+    {
+      const Frame &fr = s.callStack[d];
+
+      len = (int32_t)fr.func_name.size();
+      fwrite(&len, sizeof(int32_t), 1, f);
+      fwrite(fr.func_name.data(), 1, fr.func_name.size(), f);
+
+      fwrite(&fr.argc, sizeof(int32_t), 1, f);
+      for (int32_t j = 0; j < fr.argc; j++)
+      {
+        len = (int32_t)fr.argv[j].name.size();
+        fwrite(&len, sizeof(int32_t), 1, f);
+        fwrite(fr.argv[j].name.data(), 1, fr.argv[j].name.size(), f);
+        fwrite(&fr.argv[j].value, sizeof(int32_t), 1, f);
+      }
+
+      fwrite(&fr.returnLine, sizeof(int32_t), 1, f);
+
+      fwrite(&fr.localCount, sizeof(int32_t), 1, f);
+      for (int32_t j = 0; j < fr.localCount; j++)
+      {
+        len = (int32_t)fr.locals[j].name.size();
+        fwrite(&len, sizeof(int32_t), 1, f);
+        fwrite(fr.locals[j].name.data(), 1, fr.locals[j].name.size(), f);
+        fwrite(&fr.locals[j].value, sizeof(int32_t), 1, f);
+      }
+    }
+    node = node->next;
+  }
+
+  h.indexOffset = ftell(f);
+  fwrite(index, sizeof(int64_t), count, f);
+
+  bool failed = false;
+  if (fseek(f, 0, SEEK_SET) != 0)
+  {
+    failed = true;
+  }
+  else
+  {
+    writeHeader(f, h);
+  }
+
+  if (ferror(f) != 0)
+  {
+    failed = true;
+  }
+  if (fclose(f) != 0)
+  {
+    failed = true;
+  }
+  delete[] index;
+
+  if (failed)
+  {
+    throw runtime_error("failed writing session.tdbg");
+  }
+}
+
+int32_t main()
+{
+  try
+  {
+    if (!validateProgram("source.bin"))
+    {
+      cerr << "Error: invalid program (func/func_end mismatch or nested func)" << endl;
+      return 1;
+    }
+
+    int64_t mainOffset = resolveProgram("source.bin", "resolve.bin");
+    if (mainOffset < 0)
+    {
+      cerr << "Error: no main, duplicate function, or call to an undefined function" << endl;
+      return 1;
+    }
+
+    Timeline timeline;
+    executeProgram("resolve.bin", mainOffset, timeline);
+    writeTdbg(timeline, "session.tdbg");
+  }
+  catch (const exception &e)
+  {
+    cerr << "Error: " << e.what() << endl;
+    return 1;
+  }
 
   return 0;
 }
