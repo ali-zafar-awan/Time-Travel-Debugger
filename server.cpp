@@ -1,4 +1,4 @@
-// ======================= TIME-TRAVEL DEBUGGER - SERVER TEMPLATE =======================
+//======================= TIME-TRAVEL DEBUGGER - SERVER TEMPLATE =======================
 
 // Pipeline this file implements, top to bottom:
 //   0. Receive  -- stream the client's .trace bytes straight to source.bin on disk
@@ -7,17 +7,14 @@
 //   3. Pass 0X2   -- execute resolve.bin: tokenize ONE line at a time, update the call stack, take a snapshot -> Timeline
 //   4. Pass 0X3   -- serialize Timeline -> session.tdbg(header + snapshot records + dense index)
 
-#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
-#include <string>
+#include "helper.h"
 using namespace std;
 
 // ---- Constants ----
-const int32_t MAX_VARS_PER_FRAME = 16;
-const int32_t MAX_STACK_DEPTH = 64;
 const int32_t MAX_FUNCS = 128;
 const int32_t MAX_TOKENS = MAX_VARS_PER_FRAME + 2; // str + func_name + upto 16 params/args
 const int32_t MAX_PATCHES = MAX_FUNCS * 4;
@@ -118,6 +115,7 @@ struct TimelineNode
   TimelineNode *prev;
   TimelineNode(Snapshot *d) : data(d), next(nullptr), prev(nullptr) {}
 };
+
 class Timeline
 {
   TimelineNode *head, *tail;
@@ -147,26 +145,6 @@ public:
   int32_t getStepCount() const { return stepCount; }
 };
 
-// Core structs
-struct Variable
-{
-  string name;
-  int32_t value;
-};
-struct Frame
-{
-  string func_name;
-  int32_t argc;
-  Variable argv[MAX_VARS_PER_FRAME];
-  int32_t returnLine;
-  Variable locals[MAX_VARS_PER_FRAME];
-  int32_t localCount;
-};
-struct Snapshot
-{
-  Frame callStack[MAX_STACK_DEPTH];
-  int32_t stackDepth;
-};
 
 Timeline::~Timeline()
 {
@@ -180,14 +158,6 @@ Timeline::~Timeline()
   }
 }
 
-struct TTDBHeader
-{
-  char magic[4]; // "TTDB"
-  int32_t version;
-  int32_t stepCount;
-  int64_t indexOffset;
-};
-
 void writeHeader(FILE *f, const TTDBHeader &h)
 {
   fwrite(h.magic, 1, 4, f);
@@ -195,18 +165,6 @@ void writeHeader(FILE *f, const TTDBHeader &h)
   fwrite(&h.stepCount, sizeof(int32_t), 1, f);
   fwrite(&h.indexOffset, sizeof(int64_t), 1, f);
 }
-
-// resolve.bin - bookkeeping
-struct FuncEntry
-{
-  string funcName;
-  int64_t byteOffsetInResolveBin; // where this function's FUNC header record sits
-};
-struct PendingPatch
-{
-  int64_t byteOffsetOfOffsetField; // where in resolve.bin to seek back and overwrite
-  string targetFuncName;
-};
 
 // PASS 0x0: READING source.bin + VALIDITY CHECK
 bool readSourceLine(ifstream &in, string &out)

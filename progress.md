@@ -40,3 +40,9 @@ Implement the executeProgram Function
 18-10-2026 | 05:00 PM  
 Implement the write tdbg Function 
 ---
+07-11-2025 | 09:35 AM  
+Setup the phase 02 files
+---
+07-11-2025 | 10:20 AM  
+Implement Queue in LB and write structs in helper.h
+---
